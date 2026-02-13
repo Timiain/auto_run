@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -33,6 +34,17 @@ class ExperimentRunner:
             args.extend([f"--{k}", str(v)])
         return args
 
+    @staticmethod
+    def _parse_metrics(stdout: str) -> dict:
+        """Parse lines like `METRIC top1=0.76` from script output."""
+        metrics: dict = {}
+        for line in stdout.splitlines():
+            m = re.match(r"\s*METRIC\s+([A-Za-z0-9_\-]+)\s*=\s*([0-9]*\.?[0-9]+)", line)
+            if m:
+                key, val = m.group(1), m.group(2)
+                metrics[key] = float(val)
+        return metrics
+
     def run(self, plan_file: str | None = None):
         pfile = Path(plan_file) if plan_file else self.pm.paths.plan
         plan = read_yaml(pfile)
@@ -41,7 +53,7 @@ class ExperimentRunner:
         (run_dir / "config.yaml").write_text(pfile.read_text(encoding="utf-8"), encoding="utf-8")
         log_path = run_dir / "logs" / "run.log"
 
-        metrics = {"run_id": run_id, "status": "SUCCESS", "steps": []}
+        metrics = {"run_id": run_id, "status": "SUCCESS", "steps": [], "summary": {}}
         with log_path.open("w", encoding="utf-8") as f:
             for step in plan.get("steps", []):
                 script = self.pm.paths.root / step["script"]
@@ -55,8 +67,15 @@ class ExperimentRunner:
                 proc = subprocess.run(cmd, cwd=self.pm.paths.root, capture_output=True, text=True, check=False)
                 f.write(proc.stdout)
                 f.write(proc.stderr)
+                parsed = self._parse_metrics(proc.stdout)
                 status = "SUCCESS" if proc.returncode == 0 else "FAILED"
-                metrics["steps"].append({"name": step["name"], "status": status, "returncode": proc.returncode})
+                metrics["steps"].append({
+                    "name": step["name"],
+                    "status": status,
+                    "returncode": proc.returncode,
+                    "metrics": parsed,
+                })
+                metrics["summary"].update(parsed)
                 if proc.returncode != 0:
                     metrics["status"] = "FAILED"
 

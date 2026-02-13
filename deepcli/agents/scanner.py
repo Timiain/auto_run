@@ -9,6 +9,20 @@ class ExperimentScanner:
     def __init__(self, pm):
         self.pm = pm
 
+    @staticmethod
+    def _extract_cli_args(tree: ast.AST) -> list[str]:
+        """Extract argparse option names like --epochs/--lr from add_argument calls."""
+        cli_args: list[str] = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if not isinstance(node.func, ast.Attribute) or node.func.attr != "add_argument":
+                continue
+            for arg in node.args:
+                if isinstance(arg, ast.Constant) and isinstance(arg.value, str) and arg.value.startswith("--"):
+                    cli_args.append(arg.value.lstrip("-").replace("-", "_"))
+        return sorted(set(cli_args))
+
     def _scan_python(self, path):
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -25,7 +39,13 @@ class ExperimentScanner:
         )
         if has_main_guard or {"main", "train", "run"} & funcs:
             entry = "main" if "main" in funcs else ("train" if "train" in funcs else "run")
-            return {"name": path.stem, "path": str(path.relative_to(self.pm.paths.root)), "entry": entry, "type": "python"}
+            return {
+                "name": path.stem,
+                "path": str(path.relative_to(self.pm.paths.root)),
+                "entry": entry,
+                "type": "python",
+                "cli_args": self._extract_cli_args(tree),
+            }
         return None
 
     def scan(self):

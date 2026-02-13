@@ -18,6 +18,12 @@ class ExperimentPlanner:
             budget["epochs"] = max(3, int(budget["epochs"]) // 2)
         return budget
 
+    @staticmethod
+    def _filter_params(raw_params: dict, allowed_params: list[str]) -> dict:
+        if not allowed_params:
+            return raw_params
+        return {k: v for k, v in raw_params.items() if k in allowed_params}
+
     def _llm_hint(self, concept: dict) -> str | None:
         cfg = read_json(self.pm.paths.root / ".deepcli_llm.json", {})
         if not cfg.get("enabled"):
@@ -45,11 +51,16 @@ class ExperimentPlanner:
         for rec in registry:
             if rec.get("type") != "python":
                 continue
+            default_params = {"idea": concept.get("idea", "baseline"), **budget}
+            if "eval" in rec.get("name", "").lower() and "batch_size" not in default_params:
+                default_params["batch_size"] = 32
+            params = self._filter_params(default_params, rec.get("cli_args", []))
+
             steps.append(
                 {
                     "name": rec["name"],
                     "script": rec["path"],
-                    "params": {"idea": concept.get("idea", "baseline"), **budget},
+                    "params": params,
                     "env": env_name,
                 }
             )
